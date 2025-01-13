@@ -1708,10 +1708,15 @@ __attribute__((noinline)) static void collect_stacktrace_data(void) {
     };
 }
 
+static int pidtCompare(const void *a, const void *b) {
+    return (*(pid_t *)a - *(pid_t *)b);
+}
+
 __attribute__((noinline)) static void writeStacktraces(int fd, int uplevel) {
     /* get the list of all the process's threads that don't block or ignore the THREADS_SIGNAL */
     pid_t tids[TIDS_MAX_SIZE];
     size_t len_tids = get_ready_to_signal_threads_tids(THREADS_SIGNAL, tids);
+    qsort(tids, len_tids, sizeof(pid_t), pidtCompare);
     if (!len_tids) {
         serverLogRawFromHandler(LL_WARNING, "writeStacktraces(): Failed to get the process's threads.");
     }

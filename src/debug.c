@@ -1708,15 +1708,10 @@ __attribute__((noinline)) static void collect_stacktrace_data(void) {
     };
 }
 
-static int pidtCompare(const void *a, const void *b) {
-    return (*(pid_t *)a - *(pid_t *)b);
-}
-
 __attribute__((noinline)) static void writeStacktraces(int fd, int uplevel) {
     /* get the list of all the process's threads that don't block or ignore the THREADS_SIGNAL */
     pid_t tids[TIDS_MAX_SIZE];
     size_t len_tids = get_ready_to_signal_threads_tids(THREADS_SIGNAL, tids);
-    qsort(tids, len_tids, sizeof(pid_t), pidtCompare);
     if (!len_tids) {
         serverLogRawFromHandler(LL_WARNING, "writeStacktraces(): Failed to get the process's threads.");
     }
@@ -2445,6 +2440,7 @@ static size_t get_ready_to_signal_threads_tids(int sig_num, pid_t tids[TIDS_MAX_
     size_t tids_count = 0;
     pid_t calling_tid = syscall(SYS_gettid);
     int current_thread_index = -1;
+    int main_thread_index = -1;
     long nread;
     char buff[PATH_MAX];
 
@@ -2474,6 +2470,10 @@ static size_t get_ready_to_signal_threads_tids(int sig_num, pid_t tids[TIDS_MAX_
                 current_thread_index = tids_count;
             }
 
+            if (tid == server.pid) {
+                main_thread_index = tids_count;
+            }
+
             /* save the thread id */
             tids[tids_count++] = tid;
 
@@ -2494,6 +2494,13 @@ static size_t get_ready_to_signal_threads_tids(int sig_num, pid_t tids[TIDS_MAX_
 
         tids[tids_count - 1] = calling_tid;
         tids[current_thread_index] = last_tid;
+    }
+
+    /* Swap the zero-th index tid with main thread id */
+    if (main_thread_index != -1) {
+        pid_t tmp = tids[0];
+        tids[0] = tids[main_thread_index];
+        tids[main_thread_index] = tmp;
     }
 
     close(dir);

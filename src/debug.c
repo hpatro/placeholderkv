@@ -1728,37 +1728,54 @@ __attribute__((noinline)) static void writeStacktraces(int fd, int uplevel) {
 
     pid_t calling_tid = syscall(SYS_gettid);
 
-    /* Read the stacktrace_pipe until it's empty */
+    pid_t main_tid = server.pid;
+    stacktrace_data main_stacktrace_data = {{0}};
+    int main_stacktrace_collected = 0;
     stacktrace_data curr_stacktrace_data = {{0}};
+    
+    /* Read the stacktrace_pipe until it's empty */
     while (read(stacktrace_pipe[0], &curr_stacktrace_data, sizeof(curr_stacktrace_data)) > 0) {
-        /* stacktrace header includes the tid and the thread's name */
-        snprintf_async_signal_safe(buff, sizeof(buff), "\n%d %s", curr_stacktrace_data.tid,
-                                   curr_stacktrace_data.thread_name);
-        if (write(fd, buff, strlen(buff)) == -1) { /* Avoid warning. */
+        /* If this is the main thread, store its stacktrace for later */
+        if (curr_stacktrace_data.tid == main_tid) {
+            main_stacktrace_data = curr_stacktrace_data;
+            main_stacktrace_collected = 1;
+            continue;
+        }
+
+        /* Process and write other threads' stack traces */
+        snprintf_async_signal_safe(buff, sizeof(buff), "\n%d %s", curr_stacktrace_data.tid, curr_stacktrace_data.thread_name);
+        if (write(fd, buff, strlen(buff)) == -1) { 
+            /* Avoid warning */ 
         };
 
-        /* skip kernel call to the signal handler, the signal handler and the callback addresses */
         int curr_uplevel = 3;
-
         if (curr_stacktrace_data.tid == calling_tid) {
-            /* skip signal syscall and ThreadsManager_runOnThreads */
             curr_uplevel += uplevel + 2;
-            /* Add an indication to header of the thread that is handling the log file */
             if (write(fd, " *\n", strlen(" *\n")) == -1) { /* Avoid warning. */
             };
         } else {
-            /* just add a new line */
             if (write(fd, "\n", strlen("\n")) == -1) { /* Avoid warning. */
             };
         }
 
-        /* add the stacktrace */
-        backtrace_symbols_fd(curr_stacktrace_data.trace + curr_uplevel, curr_stacktrace_data.trace_size - curr_uplevel,
-                             fd);
-
-        ++collected;
+        backtrace_symbols_fd(curr_stacktrace_data.trace + curr_uplevel,
+                            curr_stacktrace_data.trace_size - curr_uplevel, fd);
     }
 
+    /* If the main thread's stack trace was collected, write it now. */
+    if (main_stacktrace_collected) {
+        snprintf_async_signal_safe(buff, sizeof(buff), "\n%d %s (Main Thread)", 
+                                main_stacktrace_data.tid, main_stacktrace_data.thread_name);
+        if (write(fd, buff, strlen(buff)) == -1) { 
+            /* Avoid warning */ 
+        }
+
+        int main_uplevel = 3 + uplevel + 2; // Skip additional frames for main thread
+        if (write(fd, " *\n", strlen(" *\n")) == -1) { /* Avoid warning */ }
+
+        backtrace_symbols_fd(main_stacktrace_data.trace + main_uplevel,
+                            main_stacktrace_data.trace_size - main_uplevel, fd);
+    }
     snprintf_async_signal_safe(buff, sizeof(buff), "\n%lu/%lu expected stacktraces.\n", (long unsigned)(collected),
                                (long unsigned)len_tids);
     if (write(fd, buff, strlen(buff)) == -1) { /* Avoid warning. */
